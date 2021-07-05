@@ -7,12 +7,14 @@ import (
 	"net"
 	"os"
 	"testing"
+	"time"
 
 	api "github.com/jmnelson12/distributed-systems/proglog/api/v1"
 	"github.com/jmnelson12/distributed-systems/proglog/internal/auth"
 	"github.com/jmnelson12/distributed-systems/proglog/internal/config"
 	"github.com/jmnelson12/distributed-systems/proglog/internal/log"
 	"github.com/stretchr/testify/require"
+	"go.opencensus.io/examples/exporter"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -22,7 +24,12 @@ import (
 
 var debug = flag.Bool("debug", false, "Enable observability for debugging.")
 
-// TOP PAGE 107 !!!!!!!!!!!!!!!!!!!
+/*
+TestMain(*testing.M) gives us a place for setup that applies
+to all tests in that file, like enabling our debug output. Flag parsing has to
+go in TestMain() instead of init() , otherwise Go can’t define the flag and your code
+will error and exit.
+*/
 func TestMain(m *testing.M) {
 	flag.Parse()
 	if *debug {
@@ -132,6 +139,28 @@ func setupTest(t *testing.T, fn func(*Config)) (
 	require.NoError(t, err)
 
 	authorizer := auth.New(config.ACLModelFile, config.ACLPolicyFile)
+
+	// This snippet sets up and starts the telemetry exporter to write to two files.
+	var telemetryExporter *exporter.LogExporter
+	if *debug {
+		metricsLogFile, err := ioutil.TempFile("", "metrics-*.log")
+		require.NoError(t, err)
+		t.Logf("metrics log file: %s", metricsLogFile.Name())
+
+		tracesLogFile, err := ioutil.TempFile("", "traces-*.log")
+		require.NoError(t, err)
+		t.Logf("traces log file: %s", tracesLogFile.Name())
+
+		telemetryExporter, err = exporter.NewLogExporter(exporter.Options{
+			MetricsLogFile:    metricsLogFile.Name(),
+			TracesLogFile:     tracesLogFile.Name(),
+			ReportingInterval: time.Second,
+		})
+		require.NoError(t, err)
+		err = telemetryExporter.Start()
+		require.NoError(t, err)
+	}
+
 	cfg = &Config{
 		CommitLog:  clog,
 		Authorizer: authorizer,
@@ -153,6 +182,14 @@ func setupTest(t *testing.T, fn func(*Config)) (
 			rootConn.Close()
 			nobodyConn.Close()
 			l.Close()
+
+			// We sleep for 1.5 seconds to give the telemetry exporter enough time to flush
+			// its data to disk. Then we stop and close the exporter.
+			if telemetryExporter != nil {
+				time.Sleep(1500 * time.Millisecond)
+				telemetryExporter.Stop()
+				telemetryExporter.Close()
+			}
 		}
 }
 
