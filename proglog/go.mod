@@ -7,6 +7,8 @@ require (
 	github.com/google/go-cmp v0.5.6 // indirect
 	github.com/gorilla/mux v1.8.0
 	github.com/grpc-ecosystem/go-grpc-middleware v1.3.0
+	github.com/hashicorp/raft v1.3.1
+	github.com/hashicorp/raft-boltdb v0.0.0-00010101000000-000000000000
 	github.com/hashicorp/serf v0.9.5
 	github.com/stretchr/testify v1.7.0
 	github.com/travisjeffery/go-dynaport v1.0.0
@@ -21,3 +23,5 @@ require (
 	google.golang.org/protobuf v1.26.0
 	launchpad.net/gocheck v0.0.0-20140225173054-000000000087 // indirect
 )
+
+replace github.com/hashicorp/raft-boltdb => github.com/travisjeffery/raft-boltdb v1.0.0
