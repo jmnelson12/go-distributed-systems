@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jmnelson12/distributed-systems/proglog/internal/config"
+	"github.com/jmnelson12/distributed-systems/proglog/internal/loadbalance"
 
 	api "github.com/jmnelson12/distributed-systems/proglog/api/v1"
 	"github.com/jmnelson12/distributed-systems/proglog/internal/agent"
@@ -81,6 +82,7 @@ func TestAgent(t *testing.T) {
 			)
 		}
 	}()
+	// wait until agents have joined the cluster
 	time.Sleep(3 * time.Second)
 
 	wantValue := []byte("foo")
@@ -94,6 +96,10 @@ func TestAgent(t *testing.T) {
 		},
 	)
 	require.NoError(t, err)
+
+	// wait until replication has finished
+	time.Sleep(3 * time.Second)
+
 	consumeResponse, err := leaderClient.Consume(
 		context.Background(),
 		&api.ConsumeRequest{
@@ -102,9 +108,6 @@ func TestAgent(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Equal(t, consumeResponse.Record.Value, wantValue)
-
-	// wait until replication has finished
-	time.Sleep(3 * time.Second)
 
 	followerClient := client(t, agents[1], peerTLSConfig)
 	consumeResponse, err = followerClient.Consume(
@@ -124,6 +127,7 @@ func TestAgent(t *testing.T) {
 	)
 	require.Nil(t, consumeResponse)
 	require.Error(t, err)
+
 	got := status.Code(err)
 	want := status.Code(api.ErrOffsetOutOfRange{}.GRPCStatus().Err())
 	require.Equal(t, got, want)
@@ -135,10 +139,16 @@ func client(
 	tlsConfig *tls.Config,
 ) api.LogClient {
 	tlsCreds := credentials.NewTLS(tlsConfig)
-	opts := []grpc.DialOption{grpc.WithTransportCredentials(tlsCreds)}
+	opts := []grpc.DialOption{
+		grpc.WithTransportCredentials(tlsCreds),
+	}
 	rpcAddr, err := agent.Config.RPCAddr()
 	require.NoError(t, err)
-	conn, err := grpc.Dial(rpcAddr, opts...)
+	conn, err := grpc.Dial(fmt.Sprintf(
+		"%s:///%s",
+		loadbalance.Name,
+		rpcAddr,
+	), opts...)
 	require.NoError(t, err)
 	client := api.NewLogClient(conn)
 	return client
