@@ -18,10 +18,11 @@ import (
 	"github.com/travisjeffery/go-dynaport"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/status"
 )
 
 func TestAgent(t *testing.T) {
+	var agents []*agent.Agent
+
 	serverTLSConfig, err := config.SetupTLSConfig(config.TLSConfig{
 		CertFile:      config.ServerCertFile,
 		KeyFile:       config.ServerKeyFile,
@@ -40,7 +41,6 @@ func TestAgent(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	var agents []*agent.Agent
 	for i := 0; i < 3; i++ {
 		ports := dynaport.Get(2)
 		bindAddr := fmt.Sprintf("%s:%d", "127.0.0.1", ports[0])
@@ -51,10 +51,7 @@ func TestAgent(t *testing.T) {
 
 		var startJoinAddrs []string
 		if i != 0 {
-			startJoinAddrs = append(
-				startJoinAddrs,
-				agents[0].Config.BindAddr,
-			)
+			startJoinAddrs = append(startJoinAddrs, agents[0].Config.BindAddr)
 		}
 
 		agent, err := agent.New(agent.Config{
@@ -75,23 +72,23 @@ func TestAgent(t *testing.T) {
 	}
 	defer func() {
 		for _, agent := range agents {
-			err := agent.Shutdown()
-			require.NoError(t, err)
-			require.NoError(t,
+			_ = agent.Shutdown()
+			require.NoError(
+				t,
 				os.RemoveAll(agent.Config.DataDir),
 			)
 		}
 	}()
+
 	// wait until agents have joined the cluster
 	time.Sleep(3 * time.Second)
 
-	wantValue := []byte("foo")
 	leaderClient := client(t, agents[0], peerTLSConfig)
 	produceResponse, err := leaderClient.Produce(
 		context.Background(),
 		&api.ProduceRequest{
 			Record: &api.Record{
-				Value: wantValue,
+				Value: []byte("foo"),
 			},
 		},
 	)
@@ -107,7 +104,7 @@ func TestAgent(t *testing.T) {
 		},
 	)
 	require.NoError(t, err)
-	require.Equal(t, consumeResponse.Record.Value, wantValue)
+	require.Equal(t, consumeResponse.Record.Value, []byte("foo"))
 
 	followerClient := client(t, agents[1], peerTLSConfig)
 	consumeResponse, err = followerClient.Consume(
@@ -117,20 +114,7 @@ func TestAgent(t *testing.T) {
 		},
 	)
 	require.NoError(t, err)
-	require.Equal(t, consumeResponse.Record.Value, wantValue)
-
-	consumeResponse, err = leaderClient.Consume(
-		context.Background(),
-		&api.ConsumeRequest{
-			Offset: produceResponse.Offset + 1,
-		},
-	)
-	require.Nil(t, consumeResponse)
-	require.Error(t, err)
-
-	got := status.Code(err)
-	want := status.Code(api.ErrOffsetOutOfRange{}.GRPCStatus().Err())
-	require.Equal(t, got, want)
+	require.Equal(t, consumeResponse.Record.Value, []byte("foo"))
 }
 
 func client(

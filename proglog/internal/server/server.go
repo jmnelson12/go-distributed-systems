@@ -19,6 +19,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/health"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
@@ -91,17 +93,34 @@ func NewGRPCServer(config *Config, grpcOpts ...grpc.ServerOption) (*grpc.Server,
 		grpc.StreamInterceptor(
 			grpc_middleware.ChainStreamServer(
 				grpc_ctxtags.StreamServerInterceptor(),
-				grpc_zap.StreamServerInterceptor(logger, zapOpts...),
-				grpc_auth.StreamServerInterceptor(authenticate),
-			)), grpc.UnaryInterceptor(grpc_middleware.ChainUnaryServer(
-			grpc_ctxtags.UnaryServerInterceptor(),
-			grpc_zap.UnaryServerInterceptor(logger, zapOpts...),
-			grpc_auth.UnaryServerInterceptor(authenticate),
-		)),
+				grpc_zap.StreamServerInterceptor(
+					logger, zapOpts...,
+				),
+				grpc_auth.StreamServerInterceptor(
+					authenticate,
+				),
+			)), grpc.UnaryInterceptor(
+			grpc_middleware.ChainUnaryServer(
+				grpc_ctxtags.UnaryServerInterceptor(),
+				grpc_zap.UnaryServerInterceptor(
+					logger, zapOpts...,
+				),
+				grpc_auth.UnaryServerInterceptor(
+					authenticate,
+				),
+			)),
 		grpc.StatsHandler(&ocgrpc.ServerHandler{}),
 	)
-
 	gsrv := grpc.NewServer(grpcOpts...)
+
+	// These lines create a service that supports the health check protocol. We set
+	// its serving status as serving so that the probe knows the service is alive and
+	// ready to accept connections. Then we register the service with our server so
+	// that gRPC can call this service’s endpoints.
+	hsrv := health.NewServer()
+	hsrv.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
+	healthpb.RegisterHealthServer(gsrv, hsrv)
+
 	srv, err := newgrpcServer(config)
 	if err != nil {
 		return nil, err
@@ -228,7 +247,10 @@ func authenticate(ctx context.Context) (context.Context, error) {
 	}
 
 	if peer.AuthInfo == nil {
-		return context.WithValue(ctx, subjectContextKey{}, ""), nil
+		return ctx, status.New(
+			codes.Unauthenticated,
+			"no transport security being used",
+		).Err()
 	}
 
 	tlsInfo := peer.AuthInfo.(credentials.TLSInfo)
